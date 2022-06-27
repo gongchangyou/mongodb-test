@@ -11,17 +11,21 @@ import lombok.val;
 import org.assertj.core.util.Arrays;
 import org.bson.BsonDocument;
 import org.bson.Document;
+import org.bson.types.ObjectId;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * @author gongchangyou
@@ -39,7 +43,7 @@ public class MongoDBTest {
     @PostConstruct
     public void init() {
         MongoCredential credential = MongoCredential.createCredential("admin", "admin", "123456".toCharArray());
-        MongoClient mongoClient = new MongoClient(new ServerAddress("10.10.48.194", 27017),
+        MongoClient mongoClient = new MongoClient(new ServerAddress("localhost", 27017),
                 credential, new MongoClientOptions.Builder().build());
         db = mongoClient.getDatabase("admin");//这个对应的是db
     }
@@ -85,6 +89,7 @@ public class MongoDBTest {
                 val yy = y * 10000;
                 list.add(new Document(new HashMap<>() {{
                     put("id", String.valueOf(p));
+                    log.info("id={}", p);
                     put("loc", new ArrayList<Double>() {{
                         add(xx);
                         add(yy);
@@ -95,6 +100,50 @@ public class MongoDBTest {
             db.getCollection("records").insertMany(list);
             log.info("i={}", i);
         }
+    }
+
+    public static <T> List<List<T>> split(List<T> list, int size) {
+        final AtomicInteger counter = new AtomicInteger();
+        return new ArrayList<>(
+                list.stream()
+                        .collect(Collectors.groupingBy(it -> counter.getAndIncrement() / size))
+                        .values());
+    }
+
+    @Test
+    public void batchGet() {
+        val table =db.getCollection("records");
+        val ids = new ArrayList<>();
+        for (int i = 20140000; i <20147282; i++) {
+            ids.add(String.valueOf(i));
+        }
+        val chunkedList = split(ids, 100);
+        val firstStart = System.currentTimeMillis();
+        for (val list : chunkedList) {
+            val start = System.currentTimeMillis();
+            BasicDBObject query = new BasicDBObject("id", new BasicDBObject("$in",list) );
+            table.find(query).forEach((Consumer<Document>) document ->{
+                log.info("id={}, loc={}",document.get("id"),  document.get("loc"));
+            });
+            log.info("cost={}", System.currentTimeMillis()- start);
+        }
+        log.info("allcost={}", System.currentTimeMillis()- firstStart);
+    }
+
+    @Test
+    public void singleGet() {
+        val firststart = System.currentTimeMillis();
+        val table =db.getCollection("records");
+        for (int i = 20140000; i <20147282; i++) {
+            val start = System.currentTimeMillis();
+            BasicDBObject query = new BasicDBObject("id",  String.valueOf(i));
+            log.info("i={}", i);
+            table.find(query).forEach((Consumer<Document>) document ->{
+                log.info("loc={}", document.get("loc"));
+            });
+            log.info("cost={}", System.currentTimeMillis()- start);
+        }
+        log.info("allcost={}", System.currentTimeMillis()- firststart);
     }
 
     private ThreadPoolExecutor executor = new ThreadPoolExecutor(
